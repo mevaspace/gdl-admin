@@ -59,9 +59,14 @@ async function resolveCargoId(awb: string, cookie: string): Promise<string> {
     }),
   });
 
-  if (!res.ok) throw new Error(`IAS search gagal (${res.status})`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "(unreadable)");
+    console.error(`[IAS] resolveCargoId failed: status=${res.status} awb=${awb} body=${body}`);
+    throw new Error(`IAS search gagal (${res.status}): ${body.slice(0, 200)}`);
+  }
 
   const json = await res.json();
+  console.log(`[IAS] resolveCargoId awb=${awb} response=`, JSON.stringify(json).slice(0, 300));
   const cargoId = json?.data?.[0]?.cargo_id as string | undefined;
   if (!cargoId) throw new Error(`Cargo ID tidak ditemukan untuk AWB: ${awb}`);
 
@@ -83,13 +88,20 @@ const ias: ThreePLAdapter = {
       headers: { ...headers(cookie), "content-type": "text/html", accept: "text/html,*/*" },
     });
 
-    if (!reportRes.ok) throw new Error(`IAS report gagal (${reportRes.status})`);
+    if (!reportRes.ok) {
+      const body = await reportRes.text().catch(() => "(unreadable)");
+      console.error(`[IAS] report fetch failed: status=${reportRes.status} cargoId=${cargoId} body=${body.slice(0, 300)}`);
+      throw new Error(`IAS report gagal (${reportRes.status}): ${body.slice(0, 200)}`);
+    }
 
     const html = await reportRes.text();
+    console.log(`[IAS] report HTML fetched: cargoId=${cargoId} length=${html.length}`);
 
     // Remove auto-print script so HTML can be opened without immediately printing
     const cleanHtml = html.replace(/<script[^>]*>[\s\S]*?window\.print\(\)[\s\S]*?<\/script>/gi, "");
+    console.log(`[IAS] launching puppeteer for cargoId=${cargoId}`);
     const png = await htmlToPng(cleanHtml);
+    console.log(`[IAS] puppeteer done: cargoId=${cargoId} pngSize=${png.length}`);
 
     return { data: png, ext: "png" };
   },

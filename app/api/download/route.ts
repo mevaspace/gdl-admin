@@ -45,12 +45,19 @@ export async function POST(req: NextRequest) {
       const adapter = adapterModule.default;
       return Promise.all(
         docs.map(async (doc) => {
-          const result = await adapter.fetchDocument(doc.code, credential);
-          return {
-            folder: service,
-            filename: `${doc.code}.${result.ext}`,
-            data: result.data,
-          };
+          console.log(`[download] fetching service=${service} code=${doc.code}`);
+          try {
+            const result = await adapter.fetchDocument(doc.code, credential);
+            console.log(`[download] success service=${service} code=${doc.code} ext=${result.ext}`);
+            return {
+              folder: service,
+              filename: `${doc.code}.${result.ext}`,
+              data: result.data,
+            };
+          } catch (err) {
+            console.error(`[download] failed service=${service} code=${doc.code}`, err);
+            throw err;
+          }
         })
       );
     })
