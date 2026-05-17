@@ -1,0 +1,1 @@
+chromium-bin/*.br filter=lfs diff=lfs merge=lfs -text

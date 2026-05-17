@@ -1,4 +1,5 @@
 import puppeteer from "puppeteer-core";
+import path from "path";
 import type { ThreePLAdapter, ThreePLCredential, FetchedDocument } from "./types";
 
 const BASE_URL = "https://calis.ias.id";
@@ -16,7 +17,7 @@ async function htmlToPng(html: string): Promise<Buffer> {
   } else {
     const chromium = (await import("@sparticuz/chromium")).default;
     executablePath = await chromium.executablePath(
-      "https://github.com/Sparticuz/chromium/releases/download/v148.0.0/chromium-v148.0.0-pack.tar"
+      path.join(process.cwd(), "chromium-bin")
     );
     args = chromium.args;
   }
