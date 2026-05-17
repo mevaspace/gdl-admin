@@ -1,60 +1,7 @@
-import puppeteer from "puppeteer-core";
-import path from "path";
+import { htmlToPng } from "../browser";
 import type { ThreePLAdapter, ThreePLCredential, FetchedDocument } from "./types";
 
 const BASE_URL = "https://calis.ias.id";
-
-let chromiumInitPromise: Promise<{ executablePath: string; args: string[] }> | null = null;
-let browserPromise: Promise<import("puppeteer-core").Browser> | null = null;
-
-function getChromium() {
-  if (!chromiumInitPromise) {
-    chromiumInitPromise = (async () => {
-      if (process.env.NODE_ENV === "development") {
-        const { executablePath: getPath } = await import("puppeteer");
-        return {
-          executablePath: await getPath(),
-          args: ["--no-sandbox", "--disable-setuid-sandbox"],
-        };
-      }
-      const chromium = (await import("@sparticuz/chromium")).default;
-      return {
-        executablePath: await chromium.executablePath(
-          path.join(process.cwd(), "chromium-bin")
-        ),
-        args: chromium.args,
-      };
-    })();
-  }
-  return chromiumInitPromise;
-}
-
-function getBrowser() {
-  if (!browserPromise) {
-    browserPromise = (async () => {
-      const { executablePath, args } = await getChromium();
-      const browser = await puppeteer.launch({ executablePath, args, headless: true });
-      browser.once("disconnected", () => { browserPromise = null; });
-      return browser;
-    })();
-  }
-  return browserPromise;
-}
-
-async function htmlToPng(html: string): Promise<Buffer> {
-  const browser = await getBrowser();
-  const page = await browser.newPage();
-  try {
-    await page.setViewport({ width: 1000, height: 1000 });
-    await page.setContent(html, { waitUntil: "load" });
-    const el = await page.$("#report-content");
-    if (!el) throw new Error("IAS: #report-content not found in HTML");
-    const buf = await el.screenshot({ type: "png" });
-    return Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
-  } finally {
-    await page.close();
-  }
-}
 
 function headers(cookie: string): Record<string, string> {
   return {
@@ -131,7 +78,7 @@ const ias: ThreePLAdapter = {
     // Remove auto-print script so HTML can be opened without immediately printing
     const cleanHtml = html.replace(/<script[^>]*>[\s\S]*?window\.print\(\)[\s\S]*?<\/script>/gi, "");
     console.log(`[IAS] launching puppeteer for cargoId=${cargoId}`);
-    const png = await htmlToPng(cleanHtml);
+    const png = await htmlToPng(cleanHtml, "#report-content");
     console.log(`[IAS] puppeteer done: cargoId=${cargoId} pngSize=${png.length}`);
 
     return { data: png, ext: "png" };
