@@ -4,23 +4,32 @@ import type { ThreePLAdapter, ThreePLCredential, FetchedDocument } from "./types
 
 const BASE_URL = "https://calis.ias.id";
 
-async function htmlToPng(html: string): Promise<Buffer> {
-  const isDev = process.env.NODE_ENV === "development";
+let chromiumInitPromise: Promise<{ executablePath: string; args: string[] }> | null = null;
 
-  let executablePath: string;
-  let args: string[];
-
-  if (isDev) {
-    const { executablePath: getPath } = await import("puppeteer");
-    executablePath = await getPath();
-    args = ["--no-sandbox", "--disable-setuid-sandbox"];
-  } else {
-    const chromium = (await import("@sparticuz/chromium")).default;
-    executablePath = await chromium.executablePath(
-      path.join(process.cwd(), "chromium-bin")
-    );
-    args = chromium.args;
+function getChromium() {
+  if (!chromiumInitPromise) {
+    chromiumInitPromise = (async () => {
+      if (process.env.NODE_ENV === "development") {
+        const { executablePath: getPath } = await import("puppeteer");
+        return {
+          executablePath: await getPath(),
+          args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        };
+      }
+      const chromium = (await import("@sparticuz/chromium")).default;
+      return {
+        executablePath: await chromium.executablePath(
+          path.join(process.cwd(), "chromium-bin")
+        ),
+        args: chromium.args,
+      };
+    })();
   }
+  return chromiumInitPromise;
+}
+
+async function htmlToPng(html: string): Promise<Buffer> {
+  const { executablePath, args } = await getChromium();
 
   const browser = await puppeteer.launch({ executablePath, args, headless: true });
   try {
