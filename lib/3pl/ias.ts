@@ -5,6 +5,7 @@ import type { ThreePLAdapter, ThreePLCredential, FetchedDocument } from "./types
 const BASE_URL = "https://calis.ias.id";
 
 let chromiumInitPromise: Promise<{ executablePath: string; args: string[] }> | null = null;
+let browserPromise: Promise<import("puppeteer-core").Browser> | null = null;
 
 function getChromium() {
   if (!chromiumInitPromise) {
@@ -28,12 +29,22 @@ function getChromium() {
   return chromiumInitPromise;
 }
 
-async function htmlToPng(html: string): Promise<Buffer> {
-  const { executablePath, args } = await getChromium();
+function getBrowser() {
+  if (!browserPromise) {
+    browserPromise = (async () => {
+      const { executablePath, args } = await getChromium();
+      const browser = await puppeteer.launch({ executablePath, args, headless: true });
+      browser.once("disconnected", () => { browserPromise = null; });
+      return browser;
+    })();
+  }
+  return browserPromise;
+}
 
-  const browser = await puppeteer.launch({ executablePath, args, headless: true });
+async function htmlToPng(html: string): Promise<Buffer> {
+  const browser = await getBrowser();
+  const page = await browser.newPage();
   try {
-    const page = await browser.newPage();
     await page.setViewport({ width: 1000, height: 1000 });
     await page.setContent(html, { waitUntil: "load" });
     const el = await page.$("#report-content");
@@ -41,7 +52,7 @@ async function htmlToPng(html: string): Promise<Buffer> {
     const buf = await el.screenshot({ type: "png" });
     return Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
   } finally {
-    await browser.close();
+    await page.close();
   }
 }
 
