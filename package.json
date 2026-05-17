@@ -1,0 +1,48 @@
+{
+  "name": "@mevaspace/gdl-admin",
+  "version": "0.0.0-dev",
+  "private": true,
+  "author": "Ivan Azis <ivanazis.id@gmail.com>",
+  "license": "MIT",
+  "packageManager": "pnpm@11.1.2",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@sparticuz/chromium": "^148.0.0",
+    "bcryptjs": "^3",
+    "class-variance-authority": "^0.7",
+    "clsx": "^2",
+    "jose": "^5",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.511",
+    "next": "latest",
+    "puppeteer-core": "^25.0.2",
+    "react": "^19",
+    "react-dom": "^19",
+    "tailwind-merge": "^2",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/bcryptjs": "^2",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "latest",
+    "puppeteer": "^25.0.2",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "sharp",
+      "unrs-resolver",
+      "puppeteer"
+    ]
+  }
+}
