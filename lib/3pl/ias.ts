@@ -65,8 +65,16 @@ async function resolveCargoId(awb: string, cookie: string): Promise<string> {
     throw new Error(`IAS search gagal (${res.status}): ${body.slice(0, 200)}`);
   }
 
-  const json = await res.json();
-  console.log(`[IAS] resolveCargoId awb=${awb} response=`, JSON.stringify(json).slice(0, 300));
+  const rawBody = await res.text();
+  console.log(`[IAS] resolveCargoId awb=${awb} body=`, rawBody.slice(0, 300));
+
+  let json: Record<string, unknown>;
+  try {
+    json = JSON.parse(rawBody);
+  } catch {
+    throw new Error(`IAS search return bukan JSON (cookie expired?): ${rawBody.slice(0, 200)}`);
+  }
+
   const cargoId = json?.data?.[0]?.cargo_id as string | undefined;
   if (!cargoId) throw new Error(`Cargo ID tidak ditemukan untuk AWB: ${awb}`);
 
