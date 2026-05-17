@@ -15,7 +15,9 @@ async function htmlToPng(html: string): Promise<Buffer> {
     args = ["--no-sandbox", "--disable-setuid-sandbox"];
   } else {
     const chromium = (await import("@sparticuz/chromium")).default;
-    executablePath = await chromium.executablePath();
+    executablePath = await chromium.executablePath(
+      "https://github.com/Sparticuz/chromium/releases/download/v148.0.0/chromium-v148.0.0-pack.tar"
+    );
     args = chromium.args;
   }
 
