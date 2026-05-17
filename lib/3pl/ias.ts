@@ -75,7 +75,7 @@ async function resolveCargoId(awb: string, cookie: string): Promise<string> {
     throw new Error(`IAS search return bukan JSON (cookie expired?): ${rawBody.slice(0, 200)}`);
   }
 
-  const cargoId = json?.data?.[0]?.cargo_id as string | undefined;
+  const cargoId = (json as { data?: { cargo_id?: string }[] })?.data?.[0]?.cargo_id;
   if (!cargoId) throw new Error(`Cargo ID tidak ditemukan untuk AWB: ${awb}`);
 
   return cargoId;
