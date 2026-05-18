@@ -48,7 +48,7 @@ export function CredentialForm({ service, active, onSave }: CredentialFormProps)
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-[hsl(var(--foreground))] hover:bg-[hsl(var(--accent))] transition-colors"
+        className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] transition-colors"
       >
         <span className="flex items-center gap-2">
           {active && <CheckCircle2 size={14} className="text-green-500" />}
@@ -75,7 +75,7 @@ export function CredentialForm({ service, active, onSave }: CredentialFormProps)
                   setValues((v) => ({ ...v, [field.key]: e.target.value }));
                 }}
                 placeholder={field.placeholder}
-                className="w-full rounded border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-1.5 text-sm text-[hsl(var(--foreground))] placeholder:text-[hsl(var(--muted-foreground))] focus:outline-none focus:ring-1 focus:ring-[hsl(var(--ring))]"
+                className="w-full rounded border border-[hsl(var(--border))] bg-[hsl(var(--input))] px-3 py-1.5 text-sm text-[hsl(var(--foreground))] placeholder:text-[hsl(var(--muted-foreground))] focus:outline-none focus:ring-1 focus:ring-[hsl(var(--accent))]"
               />
             </div>
           ))}

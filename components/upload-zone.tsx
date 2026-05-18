@@ -38,7 +38,7 @@ export function UploadZone({ onFile }: UploadZoneProps) {
         "flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed px-6 py-10 cursor-pointer transition-colors",
         dragging
           ? "border-[hsl(var(--primary))] bg-[hsl(var(--accent))]"
-          : "border-[hsl(var(--border))] hover:border-[hsl(var(--muted-foreground))]"
+          : "border-[hsl(var(--border))] hover:border-[hsl(var(--accent))]"
       )}
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}

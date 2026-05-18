@@ -2,10 +2,12 @@
 
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { read, utils } from "xlsx";
 import { CredentialForm } from "@/components/credential-form";
 import { UploadZone } from "@/components/upload-zone";
 import type { DocumentRequest } from "@/lib/3pl/types";
+import logo from "@/assets/logo.webp";
 
 const SUPPORTED_SERVICES = ["IAS"] as const;
 
@@ -108,9 +110,12 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-[hsl(var(--background))]">
       <header className="border-b border-[hsl(var(--border))] px-6 py-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold text-[hsl(var(--foreground))]">GDL Admin</h1>
-          <p className="text-xs text-[hsl(var(--muted-foreground))]">Bulk Download Dokumen Logistik</p>
+        <div className="flex items-center gap-3">
+          <Image src={logo} alt="GDL Logo" height={40} className="w-auto" />
+          <div>
+            <h1 className="text-lg font-semibold text-[hsl(var(--foreground))]">GDL Admin</h1>
+            <p className="text-xs text-[hsl(var(--muted-foreground))]">Bulk Download Dokumen Logistik</p>
+          </div>
         </div>
         <button
           onClick={handleLogout}

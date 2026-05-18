@@ -1,26 +1,27 @@
 @import "tailwindcss";
 
 @layer base {
+  /* Catppuccin Mocha */
   :root {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
+    --background: 240 23% 9%;        /* Crust */
+    --foreground: 226 64% 88%;       /* Text */
+    --card: 240 21% 12%;             /* Mantle */
+    --card-foreground: 226 64% 88%;
+    --popover: 240 21% 12%;          /* Mantle */
+    --popover-foreground: 226 64% 88%;
+    --primary: 267 84% 81%;          /* Mauve */
+    --primary-foreground: 240 23% 9%; /* Crust */
+    --secondary: 240 21% 15%;        /* Base */
+    --secondary-foreground: 226 64% 88%;
+    --muted: 237 16% 23%;            /* Surface0 */
+    --muted-foreground: 228 24% 72%; /* Subtext0 */
+    --accent: 217 92% 76%;           /* Blue */
+    --accent-foreground: 240 23% 9%; /* Crust */
+    --destructive: 343 81% 75%;      /* Red */
+    --destructive-foreground: 240 23% 9%;
+    --border: 234 13% 31%;           /* Surface1 */
+    --input: 234 13% 31%;            /* Surface1 */
+    --ring: 217 92% 76%;             /* Blue */
     --radius: 0.5rem;
   }
 
