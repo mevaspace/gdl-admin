@@ -10,11 +10,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | Layer | Pilihan |
 |---|---|
-| Framework | Next.js (App Router, latest) |
-| UI | shadcn/ui + Tailwind CSS — dark theme default, tanpa toggle |
-| Auth | JWT di httpOnly cookie, user list dari env `VALID_USERS` |
+| Framework | Next.js 19 (App Router) |
+| UI | shadcn/ui + Tailwind CSS v4 — dark theme default, tanpa toggle |
+| Auth | JWT (jose) di httpOnly cookie, user list dari env `VALID_USERS_B64` |
+| Password | bcryptjs |
 | Excel parsing | SheetJS (`xlsx`) — client-side |
 | ZIP generation | JSZip — server-side di API Route |
+| Browser/render | puppeteer-core + @sparticuz/chromium (prod), puppeteer full (dev) |
 | Deploy | Vercel (target Pro tier untuk 60s timeout) |
 | Package manager | pnpm |
 | Node | via `mise` |
@@ -22,14 +24,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Environment Variables
 
 ```env
-# JSON array username + bcrypt-hashed password
-VALID_USERS='[{"username":"admin","passwordHash":"$2b$10$..."}]'
+# Base64-encoded JSON array: [{"username":"admin","passwordHash":"$2b$10$..."}]
+VALID_USERS_B64="<base64>"
 JWT_SECRET="your-secret-here"
-
-# Opsional per-3PL base URL
-JNE_API_BASE_URL="https://..."
-SICEPAT_API_BASE_URL="https://..."
 ```
+
+Generate hash: `node -e "const b=require('bcryptjs');b.hash('pass',10).then(console.log)"`
+Generate base64: `echo '[{"username":"admin","passwordHash":"..."}]' | base64`
 
 ## Project Structure
 
@@ -37,54 +38,64 @@ SICEPAT_API_BASE_URL="https://..."
 /app
   /login              → halaman auth
   /dashboard          → halaman utama
-  /api/auth           → validasi login, return JWT
+  /api/auth           → validasi login, return JWT (8h expiry)
   /api/download       → fetch ke 3PL API, return ZIP
 /components
-  /credential-form    → form input credential per-3PL (disimpan ke sessionStorage)
+  /credential-form    → collapsible form credential per-3PL (sessionStorage)
   /upload-zone        → drag & drop upload Excel
 /lib
-  /3pl/[nama].ts      → modul integrasi per-partner (1 file per 3PL)
-  /zip.ts             → helper ZIP generation
-  /auth.ts            → JWT helper
-middleware.ts         → proteksi route, validasi JWT cookie
+  /3pl/
+    types.ts          → ThreePLAdapter interface, DocumentRequest type
+    ias.ts            → IAS adapter: AWB → cargo_id → HTML report → PNG
+  /auth.ts            → signToken, verifyToken (jose)
+  /browser.ts         → getBrowser, htmlToPng (puppeteer singleton)
+  /zip.ts             → buildZip (jszip)
+  /utils.ts           → cn() classname merger
+/chromium-bin         → precompiled chromium artifacts (dev + prod)
+proxy.ts              → Next.js proxy: auth guard, redirect ke /login
+next.config.ts        → allowedDevOrigins, serverExternalPackages (chromium)
 ```
 
 ## Application Flow
 
-1. **Login** → `/api/auth` validasi against `VALID_USERS` env → JWT di httpOnly cookie
-2. **Credential Setup** → user input credential tiap 3PL → simpan ke `sessionStorage` (bukan server, hilang saat tab tutup)
+1. **Login** → `/api/auth` validasi against `VALID_USERS_B64` env → JWT di httpOnly cookie
+2. **Credential Setup** → user input credential tiap 3PL → simpan ke `sessionStorage` (hilang saat tab tutup)
 3. **Upload Excel** → Col A: `document_code`, Col B: `service` (nama 3PL) → parse client-side via SheetJS → group per-3PL
-4. **Download** → kirim ke `/api/download` (credential + daftar dokumen) → fetch paralel ke 3PL API → ZIP → return ke user
+4. **Download** → POST ke `/api/download` (credential + daftar dokumen) → dynamic `import(@/lib/3pl/[service])` → fetch paralel → ZIP → return ke user
+
+## IAS Adapter Flow
+
+`lib/3pl/ias.ts` — satu-satunya adapter terimplementasi:
+1. POST `/main/advance_search/cargo` dengan AWB → dapat `cargo_id`
+2. GET `/report/btb_new/{cargoId}` → HTML report
+3. `htmlToPng(html, "#report-content")` via puppeteer → PNG buffer
+
+## Browser Service
+
+`lib/browser.ts` — singleton puppeteer instance:
+- **Dev**: full `puppeteer` + system Chrome
+- **Prod**: `puppeteer-core` + `@sparticuz/chromium` dari `chromium-bin/`
+- Reuse instance antar request (tidak spawn ulang per-request)
 
 ## Output ZIP Structure
 
 ```
 bulk_download_YYYY-MM-DD.zip
-├── JNE/
-│   └── JNE-0012345.pdf
-├── SiCepat/
-│   └── SCP-9988771.pdf
-└── JT/
-    └── JT-00456.pdf
+├── IAS/
+│   └── AWB123456.png
+└── [service]/
+    └── [code].[ext]
 ```
-
-## Development Priority
-
-1. Auth (login page + JWT validation)
-2. Dashboard skeleton + credential form
-3. Excel upload & parsing
-4. Integrasi 3PL pertama end-to-end
-5. ZIP generation & download
-6. Tambah 3PL berikutnya
 
 ## Key Constraints
 
 - `export const maxDuration = 60` di `/api/download` (Vercel Pro — Hobby max 10s)
 - Credential 3PL **tidak pernah** disimpan di server, hanya `sessionStorage`
 - Modul 3PL di `/lib/3pl/[nama].ts` — modular, mudah tambah partner baru
+- Tambah adapter baru: implement `ThreePLAdapter` interface dari `types.ts`
 - shadcn/ui install komponen via CLI: `pnpm dlx shadcn@latest add [component]`
 
-## Next.js 16 Notes
+## Next.js 19 / Proxy Notes
 
 - **Middleware** → **Proxy**: file `proxy.ts` (bukan `middleware.ts`), export function `proxy` (bukan `middleware`)
 - `NextResponse` body harus `Uint8Array`, bukan `Buffer` langsung
