@@ -121,6 +121,11 @@ export default function DashboardPage() {
 
   async function handleDownload() {
     if (!documents.length) return;
+    if (job?.status === "done" || job?.status === "failed") {
+      setJob(null);
+      setDownloadError("");
+      return;
+    }
     setDownloadError("");
     setJob(null);
     setDownloading(true);
@@ -189,6 +194,21 @@ export default function DashboardPage() {
     URL.revokeObjectURL(url);
   }
 
+  function handleDownloadAll(parts: JobPart[]) {
+    const sorted = [...parts].sort((a, b) => a.batchIndex - b.batchIndex);
+    sorted.forEach((p, i) => {
+      setTimeout(() => {
+        const a = document.createElement("a");
+        a.href = p.blobUrl;
+        a.download = `part-${String(p.batchIndex).padStart(3, "0")}.zip`;
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }, i * 400);
+    });
+  }
+
   async function handleLogout() {
     await fetch("/api/auth", { method: "DELETE" });
     router.push("/login");
@@ -202,12 +222,15 @@ export default function DashboardPage() {
   const jobActive = job?.status === "pending" || job?.status === "processing";
   const busy = downloading || jobActive;
   const buttonLabel = (() => {
-    if (!documents.length) return "Download ZIP (0 dokumen)";
+    if (!documents.length) return "Proses 0 dokumen";
     if (job?.status === "pending") return "Menunggu QStash...";
     if (job?.status === "processing") return `Memproses ${job.done + job.failed}/${job.total}...`;
+    if (job?.status === "done") return "Proses job baru";
+    if (job?.status === "failed") return "Coba lagi";
     if (downloading) return "Memproses...";
-    return `Download ZIP (${documents.length} dokumen)`;
+    return `Proses ${documents.length} dokumen`;
   })();
+  const isPrimaryFilled = !(job?.status === "done" || job?.status === "failed");
 
   return (
     <div className="min-h-screen bg-[hsl(var(--background))]">
@@ -281,7 +304,7 @@ export default function DashboardPage() {
         <section className="space-y-3">
           {downloadError && <p className="text-sm text-red-400">{downloadError}</p>}
 
-          {job && downloading && (
+          {job && jobActive && (
             <div className="rounded-md border border-[hsl(var(--border))] px-4 py-3 text-sm space-y-1.5">
               <p className="font-medium text-[hsl(var(--foreground))]">
                 Status: <span className="text-[hsl(var(--muted-foreground))]">{job.status}</span>
@@ -301,31 +324,46 @@ export default function DashboardPage() {
           )}
 
           {job?.status === "done" && job.parts.length > 0 && (
-            <div className="rounded-md border border-[hsl(var(--border))] px-4 py-3 text-sm space-y-2">
-              <p className="text-[hsl(var(--foreground))]">
-                Job selesai: {job.done}/{job.total}
-                {job.failed > 0 && <span className="text-red-400"> · gagal {job.failed}</span>}
+            <div className="rounded-md border border-[hsl(var(--primary))]/40 bg-[hsl(var(--primary))]/5 px-4 py-4 text-sm space-y-3">
+              <div className="space-y-0.5">
+                <p className="text-base font-medium text-[hsl(var(--foreground))]">
+                  Selesai: {job.done}/{job.total}
+                  {job.failed > 0 && <span className="text-red-400"> · gagal {job.failed}</span>}
+                </p>
+                <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                  {job.parts.length} batch ZIP siap diunduh.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleDownloadAll(job.parts)}
+                className="w-full rounded-md bg-[hsl(var(--primary))] px-4 py-2.5 text-sm font-medium text-[hsl(var(--primary-foreground))] hover:opacity-90 transition-opacity"
+              >
+                Unduh Semua ({job.parts.length} ZIP)
+              </button>
+              <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+                Browser mungkin minta izin untuk multiple download. Klik &ldquo;Allow&rdquo;.
               </p>
-              <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                {job.parts.length} batch ZIP tersedia. Unduh satu per satu.
-              </p>
-              <ul className="space-y-1">
-                {[...job.parts]
-                  .sort((a, b) => a.batchIndex - b.batchIndex)
-                  .map((p) => (
-                    <li key={p.batchIndex}>
-                      <a
-                        href={p.blobUrl}
-                        target="_blank"
-                        rel="noopener"
-                        className="text-xs underline text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
-                      >
-                        part-{String(p.batchIndex).padStart(3, "0")}.zip ({p.count} dok
-                        {p.failed > 0 ? ` · ${p.failed} gagal` : ""})
-                      </a>
-                    </li>
-                  ))}
-              </ul>
+              <div className="space-y-1 pt-1 border-t border-[hsl(var(--border))]">
+                <p className="text-xs text-[hsl(var(--muted-foreground))] pt-2">Atau unduh per batch:</p>
+                <ul className="space-y-1">
+                  {[...job.parts]
+                    .sort((a, b) => a.batchIndex - b.batchIndex)
+                    .map((p) => (
+                      <li key={p.batchIndex}>
+                        <a
+                          href={p.blobUrl}
+                          target="_blank"
+                          rel="noopener"
+                          className="text-xs underline text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+                        >
+                          part-{String(p.batchIndex).padStart(3, "0")}.zip ({p.count} dok
+                          {p.failed > 0 ? ` · ${p.failed} gagal` : ""})
+                        </a>
+                      </li>
+                    ))}
+                </ul>
+              </div>
             </div>
           )}
 
@@ -343,7 +381,9 @@ export default function DashboardPage() {
           <button
             onClick={handleDownload}
             disabled={busy || !documents.length}
-            className="w-full rounded-md bg-[hsl(var(--primary))] px-4 py-2.5 text-sm font-medium text-[hsl(var(--primary-foreground))] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+            className={isPrimaryFilled
+              ? "w-full rounded-md bg-[hsl(var(--primary))] px-4 py-2.5 text-sm font-medium text-[hsl(var(--primary-foreground))] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+              : "w-full rounded-md border border-[hsl(var(--border))] px-4 py-2.5 text-sm font-medium text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] hover:border-[hsl(var(--foreground))] transition-colors"}
           >
             {buttonLabel}
           </button>
