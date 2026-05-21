@@ -6,7 +6,11 @@ import Image from "next/image";
 import { read, utils, write } from "xlsx";
 import { CredentialForm } from "@/components/credential-form";
 import { UploadZone } from "@/components/upload-zone";
+import { PrimaryActionButton } from "@/components/primary-action-button";
+import { ProgressCard } from "@/components/progress-card";
+import { ResultsCard } from "@/components/results-card";
 import type { DocumentRequest } from "@/lib/3pl/types";
+import type { JobPart, JobView } from "@/lib/job-state";
 import logo from "@/assets/logo.webp";
 
 const SUPPORTED_SERVICES = ["IAS"] as const;
@@ -18,26 +22,6 @@ interface ParsedRow {
   service: string;
 }
 
-interface JobPart {
-  batchIndex: number;
-  blobUrl: string;
-  count: number;
-  failed: number;
-}
-
-interface JobState {
-  id: string;
-  status: "pending" | "processing" | "done" | "failed";
-  total: number;
-  done: number;
-  failed: number;
-  batchSize: number;
-  batchesTotal: number;
-  batchesCompleted: number;
-  parts: JobPart[];
-  errors: string[];
-}
-
 export default function DashboardPage() {
   const router = useRouter();
   const [credentials, setCredentials] = useState<Record<string, Record<string, string>>>({});
@@ -45,7 +29,7 @@ export default function DashboardPage() {
   const [parseError, setParseError] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
-  const [job, setJob] = useState<JobState | null>(null);
+  const [job, setJob] = useState<JobView | null>(null);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -100,7 +84,7 @@ export default function DashboardPage() {
         setDownloading(false);
         return;
       }
-      const data: JobState = await res.json();
+      const data: JobView = await res.json();
       setJob(data);
 
       if (data.status === "done") {
@@ -304,67 +288,16 @@ export default function DashboardPage() {
         <section className="space-y-3">
           {downloadError && <p className="text-sm text-red-400">{downloadError}</p>}
 
-          {job && jobActive && (
-            <div className="rounded-md border border-[hsl(var(--border))] px-4 py-3 text-sm space-y-1.5">
-              <p className="font-medium text-[hsl(var(--foreground))]">
-                Status: <span className="text-[hsl(var(--muted-foreground))]">{job.status}</span>
-              </p>
-              <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                Dokumen {job.done + job.failed}/{job.total}
-                {job.failed > 0 && <span className="text-red-400"> · gagal {job.failed}</span>}
-                {" · "}batch {job.batchesCompleted}/{job.batchesTotal}
-              </p>
-              <div className="h-1.5 w-full rounded-full bg-[hsl(var(--border))] overflow-hidden">
-                <div
-                  className="h-full bg-[hsl(var(--primary))] transition-all"
-                  style={{ width: `${Math.min(100, Math.round(((job.done + job.failed) / Math.max(1, job.total)) * 100))}%` }}
-                />
-              </div>
-            </div>
-          )}
+          {job && jobActive && <ProgressCard job={job} />}
 
           {job?.status === "done" && job.parts.length > 0 && (
-            <div className="rounded-md border border-[hsl(var(--primary))]/40 bg-[hsl(var(--primary))]/5 px-4 py-4 text-sm space-y-3">
-              <div className="space-y-0.5">
-                <p className="text-base font-medium text-[hsl(var(--foreground))]">
-                  Selesai: {job.done}/{job.total}
-                  {job.failed > 0 && <span className="text-red-400"> · gagal {job.failed}</span>}
-                </p>
-                <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                  {job.parts.length} batch ZIP siap diunduh.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleDownloadAll(job.parts)}
-                className="w-full rounded-md bg-[hsl(var(--primary))] px-4 py-2.5 text-sm font-medium text-[hsl(var(--primary-foreground))] hover:opacity-90 transition-opacity"
-              >
-                Unduh Semua ({job.parts.length} ZIP)
-              </button>
-              <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
-                Browser mungkin minta izin untuk multiple download. Klik &ldquo;Allow&rdquo;.
-              </p>
-              <div className="space-y-1 pt-1 border-t border-[hsl(var(--border))]">
-                <p className="text-xs text-[hsl(var(--muted-foreground))] pt-2">Atau unduh per batch:</p>
-                <ul className="space-y-1">
-                  {[...job.parts]
-                    .sort((a, b) => a.batchIndex - b.batchIndex)
-                    .map((p) => (
-                      <li key={p.batchIndex}>
-                        <a
-                          href={p.blobUrl}
-                          target="_blank"
-                          rel="noopener"
-                          className="text-xs underline text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
-                        >
-                          part-{String(p.batchIndex).padStart(3, "0")}.zip ({p.count} dok
-                          {p.failed > 0 ? ` · ${p.failed} gagal` : ""})
-                        </a>
-                      </li>
-                    ))}
-                </ul>
-              </div>
-            </div>
+            <ResultsCard
+              parts={job.parts}
+              done={job.done}
+              total={job.total}
+              failed={job.failed}
+              onDownloadAll={handleDownloadAll}
+            />
           )}
 
           {job && job.errors.length > 0 && (
@@ -378,15 +311,12 @@ export default function DashboardPage() {
             </details>
           )}
 
-          <button
+          <PrimaryActionButton
+            label={buttonLabel}
+            variant={isPrimaryFilled ? "filled" : "outline"}
             onClick={handleDownload}
             disabled={busy || !documents.length}
-            className={isPrimaryFilled
-              ? "w-full rounded-md bg-[hsl(var(--primary))] px-4 py-2.5 text-sm font-medium text-[hsl(var(--primary-foreground))] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
-              : "w-full rounded-md border border-[hsl(var(--border))] px-4 py-2.5 text-sm font-medium text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] hover:border-[hsl(var(--foreground))] transition-colors"}
-          >
-            {buttonLabel}
-          </button>
+          />
         </section>
       </main>
     </div>
