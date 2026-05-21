@@ -27,6 +27,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Base64-encoded JSON array: [{"username":"admin","passwordHash":"$2b$10$..."}]
 VALID_USERS_B64="<base64>"
 JWT_SECRET="your-secret-here"
+
+# Upstash QStash
+QSTASH_TOKEN="<token>"
+QSTASH_CURRENT_SIGNING_KEY="<key>"
+QSTASH_NEXT_SIGNING_KEY="<key>"
+
+# Upstash Redis (REST)
+UPSTASH_REDIS_REST_URL="<url>"
+UPSTASH_REDIS_REST_TOKEN="<token>"
+
+# Vercel Blob
+BLOB_READ_WRITE_TOKEN="<token>"
+
+# Base URL untuk QStash callback (production: https://your-app.vercel.app, dev: ngrok/tunnel)
+APP_URL="<url>"
 ```
 
 Generate hash: `node -e "const b=require('bcryptjs');b.hash('pass',10).then(console.log)"`
@@ -39,7 +54,9 @@ Generate base64: `echo '[{"username":"admin","passwordHash":"..."}]' | base64`
   /login              → halaman auth
   /dashboard          → halaman utama
   /api/auth           → validasi login, return JWT (8h expiry)
-  /api/download       → fetch ke 3PL API, return ZIP
+  /api/jobs/create    → terima docs+credentials, simpan state, enqueue ke QStash, return jobId
+  /api/jobs/worker    → target QStash, verify signature, eksekusi fetch+zip+blob
+  /api/jobs/[id]      → GET status job (polling endpoint)
 /components
   /credential-form    → collapsible form credential per-3PL (sessionStorage)
   /upload-zone        → drag & drop upload Excel
@@ -51,6 +68,9 @@ Generate base64: `echo '[{"username":"admin","passwordHash":"..."}]' | base64`
   /browser.ts         → getBrowser, htmlToPng (puppeteer singleton)
   /zip.ts             → buildZip (jszip)
   /utils.ts           → cn() classname merger
+  /redis.ts           → Upstash Redis client singleton
+  /qstash.ts          → QStash publisher + Receiver (signature verify)
+  /jobs.ts            → job state ops + credential encrypt/decrypt (AES via JWT_SECRET)
 /chromium-bin         → precompiled chromium artifacts (dev + prod)
 proxy.ts              → Next.js proxy: auth guard, redirect ke /login
 next.config.ts        → allowedDevOrigins, serverExternalPackages (chromium)
@@ -61,7 +81,9 @@ next.config.ts        → allowedDevOrigins, serverExternalPackages (chromium)
 1. **Login** → `/api/auth` validasi against `VALID_USERS_B64` env → JWT di httpOnly cookie
 2. **Credential Setup** → user input credential tiap 3PL → simpan ke `sessionStorage` (hilang saat tab tutup)
 3. **Upload Excel** → Col A: `name` (filename output), Col B: `identifier` (kode lookup ke 3PL), Col C: `service` (nama 3PL) → parse client-side via SheetJS → group per-3PL
-4. **Download** → POST ke `/api/download` (credential + daftar dokumen) → dynamic `import(@/lib/3pl/[service])` → fetch paralel → ZIP → return ke user
+4. **Create Job** → POST `/api/jobs/create` (credential + daftar dokumen) → server generate `jobId`, simpan state + encrypted credential di Redis, publish ke QStash (`{ jobId }` saja), return `jobId`
+5. **Worker (async)** → QStash POST `/api/jobs/worker` → verify signature → load state + creds dari Redis → dynamic `import(@/lib/3pl/[service])` → fetch paralel → ZIP → upload Vercel Blob → update Redis `status:done, blobUrl`
+6. **Polling** → client GET `/api/jobs/{id}` tiap 2s → kalau `status:done` → trigger download dari `blobUrl`
 
 ## IAS Adapter Flow
 
@@ -96,7 +118,8 @@ bulk_download_YYYY-MM-DD.zip
 
 ## Key Constraints
 
-- `export const maxDuration = 60` di `/api/download` (Vercel Pro — Hobby max 10s)
+- `export const maxDuration = 800` di `/api/jobs/worker` (Vercel Pro Fluid Compute max)
+- `export const maxDuration = 10` di `/api/jobs/create` (cepat, cuma enqueue)
 - Credential 3PL **tidak pernah** disimpan di server, hanya `sessionStorage`
 - Modul 3PL di `/lib/3pl/[nama].ts` — modular, mudah tambah partner baru
 - Tambah adapter baru: implement `ThreePLAdapter` interface dari `types.ts`

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { read, utils, write } from "xlsx";
@@ -10,11 +10,22 @@ import type { DocumentRequest } from "@/lib/3pl/types";
 import logo from "@/assets/logo.webp";
 
 const SUPPORTED_SERVICES = ["IAS"] as const;
+const POLL_INTERVAL_MS = 2000;
 
 interface ParsedRow {
   name: string;
   identifier: string;
   service: string;
+}
+
+interface JobState {
+  id: string;
+  status: "pending" | "processing" | "done" | "failed";
+  total: number;
+  done: number;
+  failed: number;
+  blobUrl?: string;
+  errors?: string[];
 }
 
 export default function DashboardPage() {
@@ -24,6 +35,14 @@ export default function DashboardPage() {
   const [parseError, setParseError] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
+  const [job, setJob] = useState<JobState | null>(null);
+  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollTimer.current) clearTimeout(pollTimer.current);
+    };
+  }, []);
 
   function handleCredentialSave(service: string, cred: Record<string, string>) {
     setCredentials((prev) => ({ ...prev, [service]: cred }));
@@ -62,9 +81,50 @@ export default function DashboardPage() {
     reader.readAsBinaryString(file);
   }, []);
 
+  function triggerBlobDownload(blobUrl: string) {
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = `bulk_download_${new Date().toISOString().slice(0, 10)}.zip`;
+    a.target = "_blank";
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  async function pollJob(jobId: string) {
+    try {
+      const res = await fetch(`/api/jobs/${jobId}`, { cache: "no-store" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setDownloadError(data.error ?? "Gagal cek status job");
+        setDownloading(false);
+        return;
+      }
+      const data: JobState = await res.json();
+      setJob(data);
+
+      if (data.status === "done") {
+        setDownloading(false);
+        if (data.blobUrl) triggerBlobDownload(data.blobUrl);
+        return;
+      }
+      if (data.status === "failed") {
+        setDownloading(false);
+        setDownloadError(data.errors?.[0] ?? "Job gagal");
+        return;
+      }
+      pollTimer.current = setTimeout(() => pollJob(jobId), POLL_INTERVAL_MS);
+    } catch {
+      setDownloadError("Koneksi terputus saat polling status");
+      setDownloading(false);
+    }
+  }
+
   async function handleDownload() {
     if (!documents.length) return;
     setDownloadError("");
+    setJob(null);
     setDownloading(true);
 
     const neededServices = [...new Set(documents.map((d) => d.service))];
@@ -76,28 +136,24 @@ export default function DashboardPage() {
     }
 
     try {
-      const res = await fetch("/api/download", {
+      const res = await fetch("/api/jobs/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ documents, credentials }),
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        setDownloadError(data.error ?? "Download gagal");
+        const data = await res.json().catch(() => ({}));
+        setDownloadError(data.error ?? "Gagal membuat job");
+        setDownloading(false);
         return;
       }
 
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `bulk_download_${new Date().toISOString().slice(0, 10)}.zip`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const { jobId } = (await res.json()) as { jobId: string };
+      setJob({ id: jobId, status: "pending", total: documents.length, done: 0, failed: 0 });
+      pollJob(jobId);
     } catch {
       setDownloadError("Tidak bisa terhubung ke server");
-    } finally {
       setDownloading(false);
     }
   }
@@ -129,6 +185,16 @@ export default function DashboardPage() {
     acc[d.service] = (acc[d.service] ?? 0) + 1;
     return acc;
   }, {});
+
+  const jobActive = job?.status === "pending" || job?.status === "processing";
+  const busy = downloading || jobActive;
+  const buttonLabel = (() => {
+    if (!documents.length) return "Download ZIP (0 dokumen)";
+    if (job?.status === "pending") return "Menunggu QStash...";
+    if (job?.status === "processing") return `Memproses ${job.done + job.failed}/${job.total}...`;
+    if (downloading) return "Memproses...";
+    return `Download ZIP (${documents.length} dokumen)`;
+  })();
 
   return (
     <div className="min-h-screen bg-[hsl(var(--background))]">
@@ -201,12 +267,48 @@ export default function DashboardPage() {
         {/* Download */}
         <section className="space-y-3">
           {downloadError && <p className="text-sm text-red-400">{downloadError}</p>}
+
+          {job && downloading && (
+            <div className="rounded-md border border-[hsl(var(--border))] px-4 py-3 text-sm space-y-1.5">
+              <p className="font-medium text-[hsl(var(--foreground))]">
+                Status: <span className="text-[hsl(var(--muted-foreground))]">{job.status}</span>
+              </p>
+              <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                Selesai {job.done}/{job.total}
+                {job.failed > 0 && <span className="text-red-400"> · gagal {job.failed}</span>}
+              </p>
+              <div className="h-1.5 w-full rounded-full bg-[hsl(var(--border))] overflow-hidden">
+                <div
+                  className="h-full bg-[hsl(var(--primary))] transition-all"
+                  style={{ width: `${Math.min(100, Math.round(((job.done + job.failed) / Math.max(1, job.total)) * 100))}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {job?.status === "done" && job.blobUrl && (
+            <div className="rounded-md border border-[hsl(var(--border))] px-4 py-3 text-sm space-y-2">
+              <p className="text-[hsl(var(--foreground))]">
+                Job selesai: {job.done}/{job.total}
+                {job.failed > 0 && <span className="text-red-400"> · gagal {job.failed}</span>}
+              </p>
+              <a
+                href={job.blobUrl}
+                target="_blank"
+                rel="noopener"
+                className="inline-block text-xs underline text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+              >
+                Unduh ulang ZIP
+              </a>
+            </div>
+          )}
+
           <button
             onClick={handleDownload}
-            disabled={downloading || !documents.length}
+            disabled={busy || !documents.length}
             className="w-full rounded-md bg-[hsl(var(--primary))] px-4 py-2.5 text-sm font-medium text-[hsl(var(--primary-foreground))] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
           >
-            {downloading ? "Mengunduh..." : `Download ZIP (${documents.length} dokumen)`}
+            {buttonLabel}
           </button>
         </section>
       </main>
