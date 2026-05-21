@@ -3,16 +3,18 @@ export interface ThreePLCredential {
 }
 
 export interface DocumentRequest {
-  code: string;
+  name: string;
+  identifier: string;
   service: string;
 }
 
 export interface FetchedDocument {
   data: Buffer;
   ext: string;
+  metadata?: Record<string, string | number>;
 }
 
 export interface ThreePLAdapter {
   name: string;
-  fetchDocument(code: string, credential: ThreePLCredential): Promise<FetchedDocument>;
+  fetchDocument(identifier: string, credential: ThreePLCredential): Promise<FetchedDocument>;
 }

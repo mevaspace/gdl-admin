@@ -16,7 +16,12 @@ function headers(cookie: string): Record<string, string> {
   };
 }
 
-async function resolveCargoId(awb: string, cookie: string): Promise<string> {
+interface CargoDetail {
+  cargo_id: string | null;
+  chw: string | null;
+}
+
+async function resolveCargo(awb: string, cookie: string): Promise<CargoDetail> {
   const res = await fetch(`${BASE_URL}/main/advance_search/cargo`, {
     method: "POST",
     headers: headers(cookie),
@@ -31,12 +36,12 @@ async function resolveCargoId(awb: string, cookie: string): Promise<string> {
 
   if (!res.ok) {
     const body = await res.text().catch(() => "(unreadable)");
-    console.error(`[IAS] resolveCargoId failed: status=${res.status} awb=${awb} body=${body}`);
+    console.error(`[IAS] resolveCargo failed: status=${res.status} awb=${awb} body=${body}`);
     throw new Error(`IAS search gagal (${res.status}): ${body.slice(0, 200)}`);
   }
 
   const rawBody = await res.text();
-  console.log(`[IAS] resolveCargoId awb=${awb} body=`, rawBody.slice(0, 300));
+  console.log(`[IAS] resolveCargo awb=${awb} body=`, rawBody.slice(0, 300));
 
   let json: Record<string, unknown>;
   try {
@@ -45,21 +50,23 @@ async function resolveCargoId(awb: string, cookie: string): Promise<string> {
     throw new Error(`IAS search return bukan JSON (cookie expired?): ${rawBody.slice(0, 200)}`);
   }
 
-  const cargoId = (json as { data?: { cargo_id?: string }[] })?.data?.[0]?.cargo_id;
-  if (!cargoId) throw new Error(`Cargo ID tidak ditemukan untuk AWB: ${awb}`);
+  const cargo = (json as { data?: CargoDetail[] })?.data?.[0];
+  if (!cargo?.cargo_id) throw new Error(`Cargo ID tidak ditemukan untuk AWB: ${awb}`);
 
-  return cargoId;
+  return cargo;
 }
 
 const ias: ThreePLAdapter = {
   name: "IAS",
 
-  async fetchDocument(code: string, credential: ThreePLCredential): Promise<FetchedDocument> {
+  async fetchDocument(identifier: string, credential: ThreePLCredential): Promise<FetchedDocument> {
     const cookie = credential.cookie?.trim();
     if (!cookie) throw new Error("IAS: credential 'cookie' wajib diisi");
 
-    // Step 1: AWB → cargo_id
-    const cargoId = await resolveCargoId(code, cookie);
+    // Step 1: AWB → cargo detail (cargo_id + chw)
+    const cargo = await resolveCargo(identifier, cookie);
+    const cargoId = cargo.cargo_id!;
+    const weight = cargo.chw ? parseFloat(cargo.chw) : 0;
 
     // Step 2: cargo_id → HTML report
     const reportRes = await fetch(`${BASE_URL}/report/btb_new/${cargoId}`, {
@@ -81,7 +88,7 @@ const ias: ThreePLAdapter = {
     const png = await htmlToPng(cleanHtml, "#report-content");
     console.log(`[IAS] puppeteer done: cargoId=${cargoId} pngSize=${png.length}`);
 
-    return { data: png, ext: "png" };
+    return { data: png, ext: "png", metadata: { weight } };
   },
 };
 

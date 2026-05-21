@@ -3,7 +3,7 @@
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { read, utils } from "xlsx";
+import { read, utils, write } from "xlsx";
 import { CredentialForm } from "@/components/credential-form";
 import { UploadZone } from "@/components/upload-zone";
 import type { DocumentRequest } from "@/lib/3pl/types";
@@ -12,7 +12,8 @@ import logo from "@/assets/logo.webp";
 const SUPPORTED_SERVICES = ["IAS"] as const;
 
 interface ParsedRow {
-  document_code: string;
+  name: string;
+  identifier: string;
   service: string;
 }
 
@@ -38,18 +39,22 @@ export default function DashboardPage() {
         const wb = read(e.target?.result, { type: "binary" });
         const sheet = wb.Sheets[wb.SheetNames[0]];
         const rows = utils.sheet_to_json<ParsedRow>(sheet, {
-          header: ["document_code", "service"],
+          header: ["name", "identifier", "service"],
           range: 1,
           defval: "",
         });
 
-        const valid = rows.filter((r) => r.document_code && r.service);
+        const valid = rows.filter((r) => r.name && r.identifier && r.service);
         if (!valid.length) {
-          setParseError("File tidak berisi data valid. Pastikan Col A = kode dokumen, Col B = nama 3PL.");
+          setParseError("File tidak berisi data valid. Pastikan Col A = name, Col B = identifier, Col C = 3PL type.");
           return;
         }
 
-        setDocuments(valid.map((r) => ({ code: String(r.document_code).trim(), service: String(r.service).trim() })));
+        setDocuments(valid.map((r) => ({
+          name: String(r.name).trim(),
+          identifier: String(r.identifier).trim(),
+          service: String(r.service).trim(),
+        })));
       } catch {
         setParseError("Gagal membaca file. Pastikan format Excel (.xlsx/.xls).");
       }
@@ -95,6 +100,24 @@ export default function DashboardPage() {
     } finally {
       setDownloading(false);
     }
+  }
+
+  function handleDownloadTemplate() {
+    const ws = utils.aoa_to_sheet([
+      ["name", "identifier", "service"],
+      ["contoh_awb_001", "1234567890", "IAS"],
+    ]);
+    ws["!cols"] = [{ wch: 24 }, { wch: 20 }, { wch: 12 }];
+    const wb = utils.book_new();
+    utils.book_append_sheet(wb, ws, "Documents");
+    const buf = write(wb, { type: "array", bookType: "xlsx" });
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "gdl_template.xlsx";
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   async function handleLogout() {
@@ -151,10 +174,17 @@ export default function DashboardPage() {
           <div>
             <h2 className="text-base font-medium text-[hsl(var(--foreground))]">Upload Excel</h2>
             <p className="text-xs text-[hsl(var(--muted-foreground))]">
-              Col A: kode dokumen &nbsp;|&nbsp; Col B: nama 3PL
+              Col A: name &nbsp;|&nbsp; Col B: identifier &nbsp;|&nbsp; Col C: 3PL type
             </p>
           </div>
           <UploadZone onFile={handleFile} />
+          <button
+            type="button"
+            onClick={handleDownloadTemplate}
+            className="text-xs text-[hsl(var(--muted-foreground))] underline-offset-2 hover:text-[hsl(var(--foreground))] hover:underline transition-colors"
+          >
+            Download template Excel
+          </button>
           {parseError && <p className="text-sm text-red-400">{parseError}</p>}
           {documents.length > 0 && (
             <div className="rounded-md border border-[hsl(var(--border))] px-4 py-3 text-sm text-[hsl(var(--foreground))] space-y-1">

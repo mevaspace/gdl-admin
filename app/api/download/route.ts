@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/lib/auth";
-import { buildZip } from "@/lib/zip";
+import { buildZip, type ZipEntry } from "@/lib/zip";
 import type { DocumentRequest, ThreePLCredential } from "@/lib/3pl/types";
 
 // Vercel Pro: 60s timeout
@@ -9,6 +9,19 @@ export const maxDuration = 60;
 interface DownloadRequestBody {
   documents: DocumentRequest[];
   credentials: Record<string, ThreePLCredential>;
+}
+
+type ManifestRow = { name: string } & Record<string, string | number>;
+
+function buildManifestTsv(rows: ManifestRow[]): Buffer {
+  const keys = new Set<string>();
+  for (const r of rows) {
+    for (const k of Object.keys(r)) if (k !== "name") keys.add(k);
+  }
+  const cols = ["name", ...Array.from(keys)];
+  const header = cols.join("\t");
+  const body = rows.map((r) => cols.map((c) => String(r[c] ?? "")).join("\t")).join("\n");
+  return Buffer.from(`${header}\n${body}\n`, "utf-8");
 }
 
 export async function POST(req: NextRequest) {
@@ -32,9 +45,15 @@ export async function POST(req: NextRequest) {
     return acc;
   }, {});
 
+  interface ServiceOutput {
+    service: string;
+    entries: ZipEntry[];
+    manifest: ManifestRow[];
+  }
+
   // Load adapters dynamically
   const adapterResults = await Promise.allSettled(
-    Object.entries(grouped).map(async ([service, docs]) => {
+    Object.entries(grouped).map(async ([service, docs]): Promise<ServiceOutput> => {
       const credential = credentials[service];
       if (!credential) throw new Error(`Credential untuk ${service} tidak ditemukan`);
 
@@ -43,33 +62,51 @@ export async function POST(req: NextRequest) {
       });
 
       const adapter = adapterModule.default;
-      return Promise.all(
+      const entries: ZipEntry[] = [];
+      const manifest: ManifestRow[] = [];
+
+      const docResults = await Promise.allSettled(
         docs.map(async (doc) => {
-          console.log(`[download] fetching service=${service} code=${doc.code}`);
-          try {
-            const result = await adapter.fetchDocument(doc.code, credential);
-            console.log(`[download] success service=${service} code=${doc.code} ext=${result.ext}`);
-            return {
-              folder: service,
-              filename: `${doc.code}.${result.ext}`,
-              data: result.data,
-            };
-          } catch (err) {
-            console.error(`[download] failed service=${service} code=${doc.code}`, err);
-            throw err;
-          }
+          console.log(`[download] fetching service=${service} identifier=${doc.identifier} name=${doc.name}`);
+          const result = await adapter.fetchDocument(doc.identifier, credential);
+          console.log(`[download] success service=${service} identifier=${doc.identifier} ext=${result.ext}`);
+          return { doc, result };
         })
       );
+
+      docResults.forEach((r, i) => {
+        const doc = docs[i];
+        if (r.status === "fulfilled") {
+          const { result } = r.value;
+          entries.push({
+            folder: service,
+            filename: `${doc.name}.${result.ext}`,
+            data: result.data,
+          });
+          manifest.push({ name: doc.name, ...(result.metadata ?? {}) });
+        } else {
+          console.error(`[download] failed service=${service} identifier=${doc.identifier}`, r.reason);
+          manifest.push({ name: doc.name });
+        }
+      });
+
+      return { service, entries, manifest };
     })
   );
 
-  type ZipEntryResult = { folder: string; filename: string; data: Buffer }[];
-  const entries = (
-    adapterResults
-      .filter((r) => r.status === "fulfilled")
-      .map((r) => (r as PromiseFulfilledResult<ZipEntryResult>).value)
-      .flat()
-  );
+  const entries: ZipEntry[] = [];
+  for (const r of adapterResults) {
+    if (r.status !== "fulfilled") continue;
+    const { service, entries: svcEntries, manifest } = r.value;
+    entries.push(...svcEntries);
+    if (manifest.length) {
+      entries.push({
+        folder: service,
+        filename: "manifest.tsv",
+        data: buildManifestTsv(manifest),
+      });
+    }
+  }
 
   const errors = adapterResults
     .filter((r): r is PromiseRejectedResult => r.status === "rejected")

@@ -60,15 +60,20 @@ next.config.ts        → allowedDevOrigins, serverExternalPackages (chromium)
 
 1. **Login** → `/api/auth` validasi against `VALID_USERS_B64` env → JWT di httpOnly cookie
 2. **Credential Setup** → user input credential tiap 3PL → simpan ke `sessionStorage` (hilang saat tab tutup)
-3. **Upload Excel** → Col A: `document_code`, Col B: `service` (nama 3PL) → parse client-side via SheetJS → group per-3PL
+3. **Upload Excel** → Col A: `name` (filename output), Col B: `identifier` (kode lookup ke 3PL), Col C: `service` (nama 3PL) → parse client-side via SheetJS → group per-3PL
 4. **Download** → POST ke `/api/download` (credential + daftar dokumen) → dynamic `import(@/lib/3pl/[service])` → fetch paralel → ZIP → return ke user
 
 ## IAS Adapter Flow
 
 `lib/3pl/ias.ts` — satu-satunya adapter terimplementasi:
-1. POST `/main/advance_search/cargo` dengan AWB → dapat `cargo_id`
+1. POST `/main/advance_search/cargo` dengan AWB → dapat `cargo_id` + `chw` (chargeable weight)
 2. GET `/report/btb_new/{cargoId}` → HTML report
 3. `htmlToPng(html, "#report-content")` via puppeteer → PNG buffer
+4. Return `metadata: { weight }` untuk manifest
+
+## Manifest
+
+Setiap service folder di ZIP berisi `manifest.tsv` — TSV `name\t<metadataKeys...>`. Kolom metadata digabung dari union semua key di `FetchedDocument.metadata`. Doc yang gagal tetap masuk manifest (kolom metadata kosong). Untuk IAS: kolom `weight` dari `chw`.
 
 ## Browser Service
 
@@ -82,9 +87,11 @@ next.config.ts        → allowedDevOrigins, serverExternalPackages (chromium)
 ```
 bulk_download_YYYY-MM-DD.zip
 ├── IAS/
-│   └── AWB123456.png
+│   ├── [name].png
+│   └── manifest.tsv      (name\tweight)
 └── [service]/
-    └── [code].[ext]
+    ├── [name].[ext]
+    └── manifest.tsv
 ```
 
 ## Key Constraints
