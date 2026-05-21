@@ -6,6 +6,8 @@ import type { DocumentRequest, ThreePLCredential } from "@/lib/3pl/types";
 
 export const maxDuration = 10;
 
+const DEFAULT_BATCH_SIZE = 30;
+
 interface CreateBody {
   documents: DocumentRequest[];
   credentials: Record<string, ThreePLCredential>;
@@ -36,20 +38,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "APP_URL env belum di-set" }, { status: 500 });
   }
 
-  const jobId = await createJob({ documents, credentials });
+  const batchSize = Number(process.env.JOB_BATCH_SIZE) || DEFAULT_BATCH_SIZE;
+  const batchesTotal = Math.ceil(documents.length / batchSize);
+
+  const jobId = await createJob({ documents, credentials }, batchSize, batchesTotal);
+
+  const workerUrl = `${appUrl.replace(/\/$/, "")}/api/jobs/worker`;
+  const client = getQStashClient();
 
   try {
-    await getQStashClient().publishJSON({
-      url: `${appUrl.replace(/\/$/, "")}/api/jobs/worker`,
-      body: { jobId },
-      retries: 3,
-    });
+    await client.batchJSON(
+      Array.from({ length: batchesTotal }, (_, batchIndex) => ({
+        url: workerUrl,
+        body: { jobId, batchIndex },
+        retries: 3,
+      })),
+    );
   } catch (err) {
     return NextResponse.json(
-      { error: "Gagal enqueue ke QStash", detail: String(err) },
+      { error: "Gagal enqueue batch ke QStash", detail: String(err) },
       { status: 502 },
     );
   }
 
-  return NextResponse.json({ jobId });
+  return NextResponse.json({ jobId, batchesTotal, batchSize });
 }

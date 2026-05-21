@@ -4,14 +4,24 @@ import type { DocumentRequest, ThreePLCredential } from "@/lib/3pl/types";
 
 export type JobStatus = "pending" | "processing" | "done" | "failed";
 
+export interface JobPart {
+  batchIndex: number;
+  blobUrl: string;
+  count: number;
+  failed: number;
+}
+
 export interface JobState {
   id: string;
   status: JobStatus;
   total: number;
   done: number;
   failed: number;
-  blobUrl?: string;
-  errors?: string[];
+  batchSize: number;
+  batchesTotal: number;
+  batchesCompleted: number;
+  parts: JobPart[];
+  errors: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -22,10 +32,13 @@ export interface JobPayload {
 }
 
 const TTL_STATE = 60 * 60 * 24;   // 24h
-const TTL_PAYLOAD = 60 * 60 * 2;  // 2h
+const TTL_PAYLOAD = 60 * 60 * 3;  // 3h
+const TTL_LISTS = 60 * 60 * 24;
 
-function key(id: string) { return `job:${id}`; }
-function payloadKey(id: string) { return `job:${id}:payload`; }
+const stateKey = (id: string) => `job:${id}`;
+const payloadKey = (id: string) => `job:${id}:payload`;
+const partsKey = (id: string) => `job:${id}:parts`;
+const errorsKey = (id: string) => `job:${id}:errors`;
 
 function deriveKey(): Buffer {
   const secret = process.env.JWT_SECRET;
@@ -53,21 +66,28 @@ export function decryptPayload(encoded: string): JobPayload {
   return JSON.parse(dec.toString("utf-8")) as JobPayload;
 }
 
-export async function createJob(payload: JobPayload): Promise<string> {
+export async function createJob(
+  payload: JobPayload,
+  batchSize: number,
+  batchesTotal: number,
+): Promise<string> {
   const id = randomBytes(12).toString("hex");
   const now = Date.now();
-  const state: JobState = {
-    id,
-    status: "pending",
-    total: payload.documents.length,
-    done: 0,
-    failed: 0,
-    createdAt: now,
-    updatedAt: now,
-  };
   const redis = getRedis();
   await Promise.all([
-    redis.set(key(id), JSON.stringify(state), { ex: TTL_STATE }),
+    redis.hset(stateKey(id), {
+      id,
+      status: "pending",
+      total: payload.documents.length,
+      done: 0,
+      failed: 0,
+      batchSize,
+      batchesTotal,
+      batchesCompleted: 0,
+      createdAt: now,
+      updatedAt: now,
+    }),
+    redis.expire(stateKey(id), TTL_STATE),
     redis.set(payloadKey(id), encryptPayload(payload), { ex: TTL_PAYLOAD }),
   ]);
   return id;
@@ -75,27 +95,109 @@ export async function createJob(payload: JobPayload): Promise<string> {
 
 export async function getJob(id: string): Promise<JobState | null> {
   const redis = getRedis();
-  const raw = await redis.get<string | JobState>(key(id));
-  if (!raw) return null;
-  if (typeof raw === "string") return JSON.parse(raw) as JobState;
-  return raw;
-}
+  const [hash, parts, errors] = await Promise.all([
+    redis.hgetall<Record<string, string | number>>(stateKey(id)),
+    redis.lrange(partsKey(id), 0, -1),
+    redis.lrange(errorsKey(id), 0, -1),
+  ]);
+  if (!hash || Object.keys(hash).length === 0) return null;
 
-export async function updateJob(id: string, patch: Partial<JobState>): Promise<JobState | null> {
-  const current = await getJob(id);
-  if (!current) return null;
-  const merged: JobState = { ...current, ...patch, updatedAt: Date.now() };
-  await getRedis().set(key(id), JSON.stringify(merged), { ex: TTL_STATE });
-  return merged;
+  const num = (k: string) => Number(hash[k] ?? 0);
+
+  return {
+    id: String(hash.id ?? id),
+    status: (hash.status as JobStatus) ?? "pending",
+    total: num("total"),
+    done: num("done"),
+    failed: num("failed"),
+    batchSize: num("batchSize"),
+    batchesTotal: num("batchesTotal"),
+    batchesCompleted: num("batchesCompleted"),
+    parts: parts.map((p) => (typeof p === "string" ? JSON.parse(p) : p)) as JobPart[],
+    errors: errors.map((e) => String(e)),
+    createdAt: num("createdAt"),
+    updatedAt: num("updatedAt"),
+  };
 }
 
 export async function loadPayload(id: string): Promise<JobPayload | null> {
-  const redis = getRedis();
-  const raw = await redis.get<string>(payloadKey(id));
+  const raw = await getRedis().get<string>(payloadKey(id));
   if (!raw) return null;
   return decryptPayload(raw);
 }
 
 export async function deletePayload(id: string): Promise<void> {
   await getRedis().del(payloadKey(id));
+}
+
+export async function markProcessing(id: string): Promise<void> {
+  const redis = getRedis();
+  await redis.hset(stateKey(id), { status: "processing", updatedAt: Date.now() });
+}
+
+export interface BatchResult {
+  batchIndex: number;
+  blobUrl: string | null;
+  doneInBatch: number;
+  failedInBatch: number;
+  errors: string[];
+}
+
+/**
+ * Atomic-ish report: increment counters, push part/error lists, mark done if last batch.
+ * Returns the new batchesCompleted count.
+ */
+export async function reportBatchResult(id: string, result: BatchResult): Promise<{
+  batchesCompleted: number;
+  batchesTotal: number;
+  finalized: boolean;
+}> {
+  const redis = getRedis();
+  const now = Date.now();
+
+  const ops: Promise<unknown>[] = [
+    redis.hincrby(stateKey(id), "done", result.doneInBatch),
+    redis.hincrby(stateKey(id), "failed", result.failedInBatch),
+    redis.hset(stateKey(id), { updatedAt: now }),
+  ];
+
+  if (result.blobUrl) {
+    const part: JobPart = {
+      batchIndex: result.batchIndex,
+      blobUrl: result.blobUrl,
+      count: result.doneInBatch,
+      failed: result.failedInBatch,
+    };
+    ops.push(redis.rpush(partsKey(id), JSON.stringify(part)));
+    ops.push(redis.expire(partsKey(id), TTL_LISTS));
+  }
+
+  if (result.errors.length) {
+    ops.push(redis.rpush(errorsKey(id), ...result.errors));
+    ops.push(redis.expire(errorsKey(id), TTL_LISTS));
+  }
+
+  await Promise.all(ops);
+
+  const batchesCompleted = await redis.hincrby(stateKey(id), "batchesCompleted", 1);
+  const batchesTotal = Number(await redis.hget(stateKey(id), "batchesTotal")) || 0;
+
+  let finalized = false;
+  if (batchesCompleted >= batchesTotal && batchesTotal > 0) {
+    const partsCount = await redis.llen(partsKey(id));
+    const status: JobStatus = partsCount > 0 ? "done" : "failed";
+    await redis.hset(stateKey(id), { status, updatedAt: Date.now() });
+    await deletePayload(id);
+    finalized = true;
+  }
+
+  return { batchesCompleted, batchesTotal, finalized };
+}
+
+export function chunkDocuments(documents: DocumentRequest[], batchSize: number): DocumentRequest[][] {
+  const chunks: DocumentRequest[][] = [];
+  for (let i = 0; i < documents.length; i += batchSize) {
+    chunks.push(documents.slice(i, i + batchSize));
+  }
+  return chunks;
 }

@@ -42,6 +42,9 @@ BLOB_READ_WRITE_TOKEN="<token>"
 
 # Base URL untuk QStash callback (production: https://your-app.vercel.app, dev: ngrok/tunnel)
 APP_URL="<url>"
+
+# Optional: ukuran batch per worker call (default 30)
+JOB_BATCH_SIZE="30"
 ```
 
 Generate hash: `node -e "const b=require('bcryptjs');b.hash('pass',10).then(console.log)"`
@@ -81,9 +84,14 @@ next.config.ts        → allowedDevOrigins, serverExternalPackages (chromium)
 1. **Login** → `/api/auth` validasi against `VALID_USERS_B64` env → JWT di httpOnly cookie
 2. **Credential Setup** → user input credential tiap 3PL → simpan ke `sessionStorage` (hilang saat tab tutup)
 3. **Upload Excel** → Col A: `name` (filename output), Col B: `identifier` (kode lookup ke 3PL), Col C: `service` (nama 3PL) → parse client-side via SheetJS → group per-3PL
-4. **Create Job** → POST `/api/jobs/create` (credential + daftar dokumen) → server generate `jobId`, simpan state + encrypted credential di Redis, publish ke QStash (`{ jobId }` saja), return `jobId`
-5. **Worker (async)** → QStash POST `/api/jobs/worker` → verify signature → load state + creds dari Redis → dynamic `import(@/lib/3pl/[service])` → fetch paralel → ZIP → upload Vercel Blob → update Redis `status:done, blobUrl`
-6. **Polling** → client GET `/api/jobs/{id}` tiap 2s → kalau `status:done` → trigger download dari `blobUrl`
+4. **Create Job (batched)** → POST `/api/jobs/create` (credential + daftar dokumen) → server chunk docs jadi N batch (`JOB_BATCH_SIZE` default 30), simpan state hash + encrypted payload di Redis, batch-publish N message QStash `{ jobId, batchIndex }`, return `{ jobId, batchesTotal, batchSize }`
+5. **Batch Worker** → QStash POST `/api/jobs/worker` per batch → verify signature → slice docs `[start, end)` → fetch paralel per service → ZIP partial → upload Blob `bulk/{date}/{jobId}/part-{idx}.zip` → atomic `HINCRBY` counter Redis → batch terakhir set `status:done`
+6. **Polling** → client GET `/api/jobs/{id}` tiap 2s → state composed dari hash + `parts` list + `errors` list. Saat `done` → tampilkan list URL ZIP per batch (multi-link download)
+
+### Job Output (Hobby Mode)
+- Tidak ada single consolidated ZIP (hindari finalizer timeout 300s)
+- Output = N partial ZIP, satu per batch. Client unduh terpisah
+- Tiap part isi: `{service}/[name].{ext}` + `{service}/manifest.tsv` (manifest hanya untuk dokumen di batch itu)
 
 ## IAS Adapter Flow
 
@@ -107,18 +115,17 @@ Setiap service folder di ZIP berisi `manifest.tsv` — TSV `name\t<metadataKeys.
 ## Output ZIP Structure
 
 ```
-bulk_download_YYYY-MM-DD.zip
-├── IAS/
-│   ├── [name].png
-│   └── manifest.tsv      (name\tweight)
-└── [service]/
-    ├── [name].[ext]
-    └── manifest.tsv
+bulk/{date}/{jobId}/
+├── part-000.zip
+│   ├── IAS/[name].png
+│   └── IAS/manifest.tsv  (name\tweight) — hanya dokumen batch ini
+├── part-001.zip
+└── ...
 ```
 
 ## Key Constraints
 
-- `export const maxDuration = 800` di `/api/jobs/worker` (Vercel Pro Fluid Compute max)
+- `export const maxDuration = 300` di `/api/jobs/worker` (Hobby max; Pro Fluid Compute bisa 800)
 - `export const maxDuration = 10` di `/api/jobs/create` (cepat, cuma enqueue)
 - Credential 3PL **tidak pernah** disimpan di server, hanya `sessionStorage`
 - Modul 3PL di `/lib/3pl/[nama].ts` — modular, mudah tambah partner baru

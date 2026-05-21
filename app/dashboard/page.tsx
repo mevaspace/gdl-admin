@@ -18,14 +18,24 @@ interface ParsedRow {
   service: string;
 }
 
+interface JobPart {
+  batchIndex: number;
+  blobUrl: string;
+  count: number;
+  failed: number;
+}
+
 interface JobState {
   id: string;
   status: "pending" | "processing" | "done" | "failed";
   total: number;
   done: number;
   failed: number;
-  blobUrl?: string;
-  errors?: string[];
+  batchSize: number;
+  batchesTotal: number;
+  batchesCompleted: number;
+  parts: JobPart[];
+  errors: string[];
 }
 
 export default function DashboardPage() {
@@ -81,17 +91,6 @@ export default function DashboardPage() {
     reader.readAsBinaryString(file);
   }, []);
 
-  function triggerBlobDownload(blobUrl: string) {
-    const a = document.createElement("a");
-    a.href = blobUrl;
-    a.download = `bulk_download_${new Date().toISOString().slice(0, 10)}.zip`;
-    a.target = "_blank";
-    a.rel = "noopener";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  }
-
   async function pollJob(jobId: string) {
     try {
       const res = await fetch(`/api/jobs/${jobId}`, { cache: "no-store" });
@@ -106,7 +105,6 @@ export default function DashboardPage() {
 
       if (data.status === "done") {
         setDownloading(false);
-        if (data.blobUrl) triggerBlobDownload(data.blobUrl);
         return;
       }
       if (data.status === "failed") {
@@ -149,8 +147,23 @@ export default function DashboardPage() {
         return;
       }
 
-      const { jobId } = (await res.json()) as { jobId: string };
-      setJob({ id: jobId, status: "pending", total: documents.length, done: 0, failed: 0 });
+      const { jobId, batchesTotal, batchSize } = (await res.json()) as {
+        jobId: string;
+        batchesTotal: number;
+        batchSize: number;
+      };
+      setJob({
+        id: jobId,
+        status: "pending",
+        total: documents.length,
+        done: 0,
+        failed: 0,
+        batchSize,
+        batchesTotal,
+        batchesCompleted: 0,
+        parts: [],
+        errors: [],
+      });
       pollJob(jobId);
     } catch {
       setDownloadError("Tidak bisa terhubung ke server");
@@ -274,8 +287,9 @@ export default function DashboardPage() {
                 Status: <span className="text-[hsl(var(--muted-foreground))]">{job.status}</span>
               </p>
               <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                Selesai {job.done}/{job.total}
+                Dokumen {job.done + job.failed}/{job.total}
                 {job.failed > 0 && <span className="text-red-400"> · gagal {job.failed}</span>}
+                {" · "}batch {job.batchesCompleted}/{job.batchesTotal}
               </p>
               <div className="h-1.5 w-full rounded-full bg-[hsl(var(--border))] overflow-hidden">
                 <div
@@ -286,21 +300,44 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {job?.status === "done" && job.blobUrl && (
+          {job?.status === "done" && job.parts.length > 0 && (
             <div className="rounded-md border border-[hsl(var(--border))] px-4 py-3 text-sm space-y-2">
               <p className="text-[hsl(var(--foreground))]">
                 Job selesai: {job.done}/{job.total}
                 {job.failed > 0 && <span className="text-red-400"> · gagal {job.failed}</span>}
               </p>
-              <a
-                href={job.blobUrl}
-                target="_blank"
-                rel="noopener"
-                className="inline-block text-xs underline text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
-              >
-                Unduh ulang ZIP
-              </a>
+              <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                {job.parts.length} batch ZIP tersedia. Unduh satu per satu.
+              </p>
+              <ul className="space-y-1">
+                {[...job.parts]
+                  .sort((a, b) => a.batchIndex - b.batchIndex)
+                  .map((p) => (
+                    <li key={p.batchIndex}>
+                      <a
+                        href={p.blobUrl}
+                        target="_blank"
+                        rel="noopener"
+                        className="text-xs underline text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+                      >
+                        part-{String(p.batchIndex).padStart(3, "0")}.zip ({p.count} dok
+                        {p.failed > 0 ? ` · ${p.failed} gagal` : ""})
+                      </a>
+                    </li>
+                  ))}
+              </ul>
             </div>
+          )}
+
+          {job && job.errors.length > 0 && (
+            <details className="text-xs text-[hsl(var(--muted-foreground))]">
+              <summary className="cursor-pointer">Lihat {job.errors.length} error</summary>
+              <ul className="mt-1 space-y-0.5 max-h-40 overflow-y-auto">
+                {job.errors.slice(0, 50).map((e, i) => (
+                  <li key={i} className="text-red-400">{e}</li>
+                ))}
+              </ul>
+            </details>
           )}
 
           <button
