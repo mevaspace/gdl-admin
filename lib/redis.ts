@@ -4,9 +4,11 @@ let _redis: Redis | null = null;
 
 export function getRedis(): Redis {
   if (_redis) return _redis;
-  _redis = new Redis({
-    url: process.env.UPSTASH_REDIS_REST_URL!,
-    token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-  });
+  const url = process.env.KV_REST_API_URL;
+  const token = process.env.KV_REST_API_TOKEN;
+  if (!url || !token) {
+    throw new Error("Redis env missing: set KV_REST_API_URL + KV_REST_API_TOKEN");
+  }
+  _redis = new Redis({ url, token });
   return _redis;
 }

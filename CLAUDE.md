@@ -33,9 +33,9 @@ QSTASH_TOKEN="<token>"
 QSTASH_CURRENT_SIGNING_KEY="<key>"
 QSTASH_NEXT_SIGNING_KEY="<key>"
 
-# Upstash Redis (REST)
-UPSTASH_REDIS_REST_URL="<url>"
-UPSTASH_REDIS_REST_TOKEN="<token>"
+# Upstash Redis (REST) — auto-inject dari Vercel KV/Upstash integration
+KV_REST_API_URL="<url>"
+KV_REST_API_TOKEN="<token>"
 
 # Vercel Blob
 BLOB_READ_WRITE_TOKEN="<token>"
